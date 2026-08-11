@@ -81,3 +81,8 @@ desktop.ini
 # ===========================
 .dockerignore
 docker-compose.override.yml
+
+# ===========================
+# Embedded Python Runtime
+# ===========================
+python-embed/
