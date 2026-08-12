@@ -59,6 +59,7 @@ trading_secrets.*
 data/raw/
 data/cache/
 logs/
+backend/installed_plugins/
 
 # ===========================
 # IDE & OS

@@ -1,4 +1,5 @@
 """TICKR — Candles API routes"""
+import math
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -178,6 +179,16 @@ def compute_indicator(req: ComputeRequest, current_user: User = Depends(get_curr
     result_df = ind.compute(df, **req.params)
     indicator_cols = [c for c in result_df.columns if c not in ["symbol", "exchange", "date", "open", "high", "low", "close", "volume"]]
     result = result_df[["date"] + indicator_cols].to_dict("records")
+    # Rolling-window math (ewm/rolling means, ratios, etc.) commonly produces
+    # NaN/Inf at the warm-up edge of the series. JSON has no representation
+    # for either, and Starlette's JSONResponse rejects them outright rather
+    # than silently degrading — so any indicator plugin (built-in or a
+    # third-party upload) that leaves one in its output would 500 the whole
+    # request. Normalize to null here, once, for every indicator.
+    result = [
+        {k: (None if isinstance(v, float) and not math.isfinite(v) else v) for k, v in row.items()}
+        for row in result
+    ]
     return {
         "indicator": req.indicator,
         "overlay": ind.overlay,

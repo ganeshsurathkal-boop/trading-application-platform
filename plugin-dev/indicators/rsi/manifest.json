@@ -1,0 +1,9 @@
+{
+  "name": "RSI",
+  "type": "indicator",
+  "version": "1.0.0",
+  "description": "Relative Strength Index — momentum oscillator measuring speed and magnitude of price changes",
+  "author": "TICKR",
+  "entry_module": "plugin",
+  "entry_class": "RSIIndicator"
+}

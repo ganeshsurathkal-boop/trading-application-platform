@@ -47,3 +47,14 @@ def get_indicator(name: str) -> BaseIndicator | None:
 
 def list_indicators() -> list[dict]:
     return [ind.to_dict() for ind in get_registry().values()]
+
+
+def register_instance(instance: BaseIndicator) -> None:
+    """Add a dynamically-loaded (uploaded) indicator plugin to the live registry."""
+    get_registry()  # ensure built-ins are discovered first
+    _registry[instance.name] = instance
+
+
+def unregister(name: str) -> None:
+    """Remove a plugin from the live registry (disable/uninstall)."""
+    _registry.pop(name, None)

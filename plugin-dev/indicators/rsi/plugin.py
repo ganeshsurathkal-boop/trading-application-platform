@@ -1,6 +1,6 @@
 """RSI — Relative Strength Index indicator plugin"""
 import pandas as pd
-from app.indicators.base import BaseIndicator
+from plugin_sdk import BaseIndicator
 
 
 class RSIIndicator(BaseIndicator):
@@ -8,7 +8,7 @@ class RSIIndicator(BaseIndicator):
     label = "RSI({period})"
     description = "Relative Strength Index — momentum oscillator measuring speed and magnitude of price changes"
     category = "momentum"
-    overlay = False  # Sub-chart
+    overlay = False  # renders as its own sub-chart panel, below the volume bars
     default_params = {"period": 14}
     param_schema = [
         {"name": "period", "type": "int", "min": 2, "max": 100, "label": "Period"},

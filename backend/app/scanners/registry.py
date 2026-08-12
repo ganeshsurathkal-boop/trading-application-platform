@@ -49,3 +49,14 @@ def list_by_category() -> dict:
         cat = s.category if s.category in result else "plugin"
         result[cat].append(s.to_dict())
     return result
+
+
+def register_instance(instance: BaseScanner) -> None:
+    """Add a dynamically-loaded (uploaded) scanner plugin to the live registry."""
+    get_registry()  # ensure built-ins are discovered first
+    _registry[instance.name] = instance
+
+
+def unregister(name: str) -> None:
+    """Remove a plugin from the live registry (disable/uninstall)."""
+    _registry.pop(name, None)

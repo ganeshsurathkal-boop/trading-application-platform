@@ -4,9 +4,10 @@ TICKR — FastAPI Application Entry Point
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.database import init_db
+from app.database import init_db, SessionLocal
 from app.services.scheduler import start_scheduler, stop_scheduler
-from app.api.routes import auth, candles, watchlist, scanner, profile, kite, bhav
+from app.services import plugin_manager
+from app.api.routes import auth, candles, watchlist, scanner, profile, kite, bhav, admin
 
 app = FastAPI(
     title="TICKR Trading API",
@@ -31,6 +32,7 @@ app.include_router(scanner.router)
 app.include_router(profile.router)
 app.include_router(kite.router)
 app.include_router(bhav.router)
+app.include_router(admin.router)
 
 
 # ── Startup / Shutdown ────────────────────────────────────────────────────────
@@ -41,6 +43,13 @@ async def startup():
     mode = "MOCK DATA" if settings.USE_MOCK_DATA else "LIVE — KITE CONNECT"
     print(f"[TICKR] Mode: {mode}")
     start_scheduler()
+
+    db = SessionLocal()
+    try:
+        plugin_manager.seed_default_plugins(db)
+        plugin_manager.load_all_installed(db)
+    finally:
+        db.close()
 
 
 @app.on_event("shutdown")

@@ -13,6 +13,7 @@ export default function AppBar() {
   const screenLabel =
     location.pathname.startsWith('/scanner') ? 'SCREEN 2 — STOCK SCANNER' :
     location.pathname.startsWith('/results') ? 'SCREEN 3 — SCAN RESULTS' :
+    location.pathname.startsWith('/admin') ? 'ADMIN — PLUGIN MANAGEMENT' :
     'SCREEN 1 — CHART TERMINAL';
 
   const isActive = (path: string) =>
@@ -43,6 +44,12 @@ export default function AppBar() {
             className={`nav-link`}
             onClick={() => navigate('/')}
           >Watchlists</span>
+
+          <span
+            id="nav-admin"
+            className={`nav-link ${isActive('/admin') ? 'active' : ''}`}
+            onClick={() => navigate('/admin/plugins')}
+          >Admin</span>
 
           <button
             id="profile-btn"

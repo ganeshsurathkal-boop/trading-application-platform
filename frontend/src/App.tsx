@@ -6,6 +6,7 @@ import AppBar from './components/layout/AppBar';
 import ChartPage from './pages/ChartPage';
 import ScannerPage from './pages/ScannerPage';
 import ScanResultsPage from './pages/ScanResultsPage';
+import AdminPluginsPage from './pages/AdminPluginsPage';
 import LoginPage from './pages/LoginPage';
 import api from './api/client';
 
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="/" element={<ProtectedLayout><ChartPage /></ProtectedLayout>} />
         <Route path="/scanner" element={<ProtectedLayout><ScannerPage /></ProtectedLayout>} />
         <Route path="/results" element={<ProtectedLayout><ScanResultsPage /></ProtectedLayout>} />
+        <Route path="/admin/plugins" element={<ProtectedLayout><AdminPluginsPage /></ProtectedLayout>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

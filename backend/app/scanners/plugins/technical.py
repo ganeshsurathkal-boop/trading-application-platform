@@ -1,7 +1,6 @@
 """52-Week High Scanner Plugin"""
 from datetime import date, timedelta
 from typing import List, Dict, Any
-import random
 from app.scanners.base import BaseScanner
 
 
@@ -16,7 +15,7 @@ class Week52HighScanner(BaseScanner):
 
     def run(self, symbols: List[str], exchange: str = "NSE",
             as_of_date: date = None, **params) -> List[Dict[str, Any]]:
-        from app.services.breeze_service import breeze_service
+        from app.services.kite_service import kite_service
         threshold = float(params.get("threshold_pct", 1.0))
         as_of = as_of_date or date.today()
         from_date = as_of - timedelta(days=365)
@@ -24,7 +23,7 @@ class Week52HighScanner(BaseScanner):
 
         for symbol in symbols:
             try:
-                candles = breeze_service.fetch_historical_data(symbol, from_date, as_of, exchange)
+                candles = kite_service.fetch_historical_data(symbol, from_date, as_of, exchange)
                 if not candles:
                     continue
                 high_52w = max(c["high"] for c in candles)
@@ -58,7 +57,7 @@ class MACrossoverScanner(BaseScanner):
 
     def run(self, symbols: List[str], exchange: str = "NSE",
             as_of_date: date = None, **params) -> List[Dict[str, Any]]:
-        from app.services.breeze_service import breeze_service
+        from app.services.kite_service import kite_service
         fast = int(params.get("fast_period", 20))
         slow = int(params.get("slow_period", 50))
         as_of = as_of_date or date.today()
@@ -67,7 +66,7 @@ class MACrossoverScanner(BaseScanner):
 
         for symbol in symbols:
             try:
-                candles = breeze_service.fetch_historical_data(symbol, from_date, as_of, exchange)
+                candles = kite_service.fetch_historical_data(symbol, from_date, as_of, exchange)
                 if len(candles) < slow + 2:
                     continue
                 closes = [c["close"] for c in candles]
