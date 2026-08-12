@@ -404,7 +404,7 @@ class KiteService:
         from app.database import SessionLocal
 
         MAX_WORKERS = 5  # 5 threads × rate-limited → safe throughput near 3 req/s
-        BATCH_COMMIT = 100
+        BATCH_COMMIT = 5  # commit every 5 symbols to keep SQLite write locks very short
 
         progress = self.bulk_progress
         progress.running = True
@@ -431,17 +431,15 @@ class KiteService:
                   f"{from_date} → {to_date}, workers={MAX_WORKERS}")
 
             # ── Resume support: skip symbols already fully downloaded ───────
-            # Open the write session early so we can inspect existing data.
-            # A symbol is considered complete if its oldest candle falls within
-            # 30 days of from_date — meaning the full history window is present.
-            write_db = SessionLocal()
+            # Use a short-lived session to inspect existing data without holding locks.
             from sqlalchemy import func as sql_func
             threshold = from_date + timedelta(days=30)
-            min_date_rows = (
-                write_db.query(Candle.symbol, sql_func.min(Candle.date).label("min_date"))
-                .group_by(Candle.symbol)
-                .all()
-            )
+            with SessionLocal() as inspect_db:
+                min_date_rows = (
+                    inspect_db.query(Candle.symbol, sql_func.min(Candle.date).label("min_date"))
+                    .group_by(Candle.symbol)
+                    .all()
+                )
             already_done = {r.symbol for r in min_date_rows if r.min_date <= threshold}
             skipped_count = sum(1 for s in symbols if s in already_done)
             symbols = [s for s in symbols if s not in already_done]
@@ -460,6 +458,7 @@ class KiteService:
                 return symbol, candles
 
             done_count = skipped_count  # start counter from already-completed offset
+            write_db = SessionLocal()
             try:
                 with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                     futures = {executor.submit(fetch_one, sym): sym for sym in symbols}
