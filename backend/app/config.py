@@ -26,8 +26,10 @@ class Settings:
     # How many years of history to download during the one-time bulk load
     KITE_BULK_DOWNLOAD_YEARS: int = int(os.getenv("KITE_BULK_DOWNLOAD_YEARS", "5"))
 
+    # Frontend dev server runs over HTTPS (required for the Kite OAuth redirect),
+    # so the HTTPS origin must be allow-listed alongside the plain-HTTP fallbacks.
     CORS_ORIGINS: list[str] = os.getenv(
-        "CORS_ORIGINS", "http://localhost:5173,http://localhost:3000"
+        "CORS_ORIGINS", "https://localhost:5173,http://localhost:5173,http://localhost:3000"
     ).split(",")
 
     # Use mock data only when no Kite credentials are configured
