@@ -43,8 +43,9 @@ export default function SymbolBar() {
         className="duration-select"
         value={duration}
         onChange={(e) => setDuration(e.target.value as Duration)}
+        title="Max history to load when scrolling left"
       >
-        {DURATIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+        {DURATIONS.map((d) => <option key={d} value={d}>Max {d}</option>)}
       </select>
 
       <button

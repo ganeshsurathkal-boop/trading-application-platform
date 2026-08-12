@@ -85,6 +85,16 @@ def create_session(req: SessionRequest, current_user: User = Depends(get_current
     }
 
 
+@router.delete("/session")
+def delete_session(current_user: User = Depends(get_current_user)):
+    """
+    Disconnect from Kite Connect.
+    Clears the access token from memory and from .env on disk.
+    """
+    kite_service.disconnect()
+    return {"ok": True, "message": "Disconnected from Kite Connect."}
+
+
 # ── Bulk Historical Download ───────────────────────────────────────────────────
 
 @router.post("/bulk-download")
@@ -121,3 +131,15 @@ def start_bulk_download(
 def get_bulk_download_status(current_user: User = Depends(get_current_user)):
     """Returns progress of the ongoing (or last completed) bulk download."""
     return kite_service.bulk_progress.to_dict()
+
+
+@router.delete("/bulk-download")
+def cancel_bulk_download(current_user: User = Depends(get_current_user)):
+    """
+    Request cancellation of a running bulk download.
+    The download will stop after the current symbol finishes.
+    """
+    if not kite_service.bulk_progress.running:
+        raise HTTPException(status_code=400, detail="No bulk download is currently running.")
+    kite_service.bulk_progress.stop_requested = True
+    return {"ok": True, "message": "Cancellation requested. Download will stop shortly."}

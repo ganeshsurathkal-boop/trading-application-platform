@@ -40,7 +40,34 @@ def _aggregate_monthly(candles: list[dict]) -> list[dict]:
     return df.to_dict("records")
 
 
+@router.get("/candles/search")
+def search_symbols(
+    q: str = Query(..., min_length=1, description="Symbol substring to search for"),
+    exchange: str = Query("NSE"),
+    limit: int = Query(15, ge=1, le=50),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Search for symbols in the local DB matching the query string.
+    Used for autocomplete in the watchlist Add Stock input.
+    Returns up to `limit` distinct symbols ordered alphabetically.
+    """
+    pattern = f"%{q.strip().upper()}%"
+    rows = (
+        db.query(Candle.symbol)
+        .filter(Candle.exchange == exchange, Candle.symbol.ilike(pattern))
+        .distinct()
+        .order_by(Candle.symbol)
+        .limit(limit)
+        .all()
+    )
+    symbols = [r.symbol for r in rows]
+    return {"symbols": symbols, "count": len(symbols)}
+
+
 @router.get("/candles/{symbol}")
+
 def get_candles(
     symbol: str,
     duration: str = Query("6M", description="1M | 3M | 6M | 1Y | 2Y | 5Y"),

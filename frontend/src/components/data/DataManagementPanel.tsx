@@ -122,6 +122,17 @@ export default function DataManagementPanel() {
     }
   };
 
+  const handleKiteDisconnect = async () => {
+    if (!confirm('Disconnect from Zerodha Kite Connect? You will need to re-authenticate to use live data.')) return;
+    try {
+      await api.delete('/api/kite/session');
+      showToast('Disconnected from Kite Connect.', 'success');
+      await loadKiteStatus();
+    } catch (e: any) {
+      showToast(e.response?.data?.detail || 'Failed to disconnect', 'error');
+    }
+  };
+
   // ── Bulk download ─────────────────────────────────────────────────────────────
 
   const handleBulkDownload = async () => {
@@ -131,6 +142,15 @@ export default function DataManagementPanel() {
       await loadKiteStatus();
     } catch (e: any) {
       showToast(e.response?.data?.detail || 'Failed to start bulk download', 'error');
+    }
+  };
+
+  const handleCancelDownload = async () => {
+    try {
+      await api.delete('/api/kite/bulk-download');
+      showToast('Cancellation requested — download will stop shortly.', 'success');
+    } catch (e: any) {
+      showToast(e.response?.data?.detail || 'Failed to cancel download', 'error');
     }
   };
 
@@ -214,17 +234,31 @@ export default function DataManagementPanel() {
             <br />
             Add <code>KITE_API_KEY</code> and <code>KITE_API_SECRET</code> to <code>backend/.env</code> to enable live data.
           </div>
-        ) : !kiteStatus?.connected ? (
+        ) : kiteStatus?.connected ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              ✓ Live data active
+            </span>
+            <button
+              id="kite-disconnect-btn"
+              className="dm-btn dm-btn--danger"
+              onClick={handleKiteDisconnect}
+              style={{ padding: '4px 12px', fontSize: 12 }}
+            >
+              Disconnect
+            </button>
+          </div>
+        ) : (
           <button id="kite-connect-btn" className="dm-btn dm-btn--primary" onClick={handleKiteConnect}>
             Connect to Zerodha Kite →
           </button>
-        ) : null}
+        )}
 
         {/* Bulk download section */}
         <div className="dm-subsection">
           <div className="dm-subsection-label">One-Time Historical Download</div>
           <div className="dm-desc">
-            Downloads 5 years of daily OHLCV data for all NSE equity symbols (~2,000+ stocks). Run this once after connecting.
+            Downloads 5 years of daily OHLCV data for all NSE mainboard equity symbols (~1,800 stocks). Run this once after connecting.
           </div>
 
           {bulk?.running ? (
@@ -236,7 +270,17 @@ export default function DataManagementPanel() {
               <div className="dm-progress-bar">
                 <div className="dm-progress-fill" style={{ width: `${bulk.pct}%` }} />
               </div>
-              <div className="dm-progress-pct">{bulk.pct}% complete</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                <span className="dm-progress-pct">{bulk.pct}% complete</span>
+                <button
+                  id="cancel-download-btn"
+                  className="dm-btn dm-btn--danger"
+                  onClick={handleCancelDownload}
+                  style={{ padding: '3px 10px', fontSize: 11 }}
+                >
+                  ✕ Cancel
+                </button>
+              </div>
             </div>
           ) : (
             <button
@@ -255,6 +299,7 @@ export default function DataManagementPanel() {
               {bulk.errors.length > 0 && ` (${bulk.errors.length} errors)`}
             </div>
           )}
+
         </div>
       </div>
 

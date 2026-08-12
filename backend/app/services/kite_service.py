@@ -11,9 +11,28 @@ Falls back to realistic mock data when KITE_API_KEY is not set.
 import os
 import random
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta, datetime
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Tuple
 from app.config import settings
+
+# Kite API rate limit: 3 requests/second across all connections.
+# We use a token-bucket style lock to stay safely within that limit.
+_RATE_LIMIT_LOCK = threading.Lock()
+_RATE_LIMIT_INTERVAL = 0.38  # seconds between requests → ~2.6 req/s (safe margin)
+_last_request_time: float = 0.0
+
+
+def _rate_limited_sleep():
+    """Block the calling thread until it is safe to make another Kite API call."""
+    global _last_request_time
+    with _RATE_LIMIT_LOCK:
+        now = time.monotonic()
+        wait = _RATE_LIMIT_INTERVAL - (now - _last_request_time)
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_time = time.monotonic()
 
 # ── Mock data generator ────────────────────────────────────────────────────────
 
@@ -67,6 +86,7 @@ class BulkDownloadProgress:
     """Thread-safe progress tracker for the bulk historical download."""
     def __init__(self):
         self.running = False
+        self.stop_requested = False
         self.done = 0
         self.total = 0
         self.current_symbol = ""
@@ -79,6 +99,7 @@ class BulkDownloadProgress:
     def to_dict(self) -> dict:
         return {
             "running": self.running,
+            "stop_requested": self.stop_requested,
             "done": self.done,
             "total": self.total,
             "current_symbol": self.current_symbol,
@@ -186,6 +207,15 @@ class KiteService:
         """Clear the in-memory session (call when token expires)."""
         self._kite = None
         self._connected = False
+        self._token_cache.clear()
+        self._instruments_cache = None
+
+    def disconnect(self):
+        """Fully disconnect: clear session and wipe the access token from .env."""
+        self.invalidate_session()
+        settings.KITE_ACCESS_TOKEN = ""
+        self._write_token_to_env("")  # Clear token in .env on disk
+        print("[KiteService] Disconnected from Zerodha Kite Connect.")
 
     def is_connected(self) -> bool:
         return self._connect()
@@ -202,12 +232,20 @@ class KiteService:
         try:
             instruments = self._kite.instruments("NSE")
             self._instruments_cache = instruments
+            # Strict filter for NSE mainboard equity stocks:
+            #   segment="NSE"         → mainboard only (excludes NFO, etc.)
+            #   instrument_type="EQ"  → equity only (excludes GB, NCD, MF, etc.)
+            #   lot_size == 1         → standard equity lot (excludes some structured products)
+            #   no digits in symbol   → excludes bonds (SGB202628), NCDs, rights (XYZ-RE), etc.
             symbols = [
                 inst["tradingsymbol"]
                 for inst in instruments
-                if inst.get("segment") == "NSE-EQ" and inst.get("instrument_type") == "EQ"
+                if inst.get("segment") == "NSE"
+                and inst.get("instrument_type") == "EQ"
+                and inst.get("lot_size") == 1
+                and not any(ch.isdigit() for ch in inst.get("tradingsymbol", ""))
             ]
-            print(f"[KiteService] Found {len(symbols)} NSE equity symbols")
+            print(f"[KiteService] Found {len(symbols)} NSE mainboard equity symbols")
             return symbols
         except Exception as e:
             print(f"[KiteService] get_all_nse_symbols failed: {e}")
@@ -229,7 +267,8 @@ class KiteService:
 
             for inst in self._instruments_cache:
                 if (inst.get("tradingsymbol") == symbol
-                        and inst.get("segment") == f"{exchange}-EQ"):
+                        and inst.get("segment") == exchange
+                        and inst.get("instrument_type") == "EQ"):
                     token = inst["instrument_token"]
                     self._token_cache[cache_key] = token
                     return token
@@ -267,6 +306,7 @@ class KiteService:
             return generate_mock_candles(symbol, from_date, to_date)
 
         try:
+            _rate_limited_sleep()  # Respect Kite 3 req/s rate limit
             records = self._kite.historical_data(
                 instrument_token=token,
                 from_date=datetime.combine(from_date, datetime.min.time()),
@@ -286,7 +326,6 @@ class KiteService:
                 }
                 for r in records
             ]
-            print(f"[KiteService] Fetched {len(candles)} candles for {symbol}")
             return candles
         except Exception as e:
             err = str(e)
@@ -295,7 +334,7 @@ class KiteService:
                 self.invalidate_session()
             else:
                 print(f"[KiteService] API error for {symbol}: {e}")
-            return generate_mock_candles(symbol, from_date, to_date)
+            return []
 
     # ── Bulk historical download — all NSE symbols ────────────────────────────
 
@@ -323,11 +362,21 @@ class KiteService:
         return True
 
     def _bulk_download_worker(self, db, years: int):
-        """Worker function executed in a background thread for bulk download."""
+        """
+        Concurrent bulk download using a thread pool.
+        - Fetches data from Kite in parallel (up to MAX_WORKERS concurrent requests)
+        - All threads share the global rate limiter (_rate_limited_sleep)
+        - DB writes are serialised on the main worker thread to avoid SQLite conflicts
+        """
         from app.models.candle import Candle
+        from app.database import SessionLocal
+
+        MAX_WORKERS = 5  # 5 threads × rate-limited → safe throughput near 3 req/s
+        BATCH_COMMIT = 100
 
         progress = self.bulk_progress
         progress.running = True
+        progress.stop_requested = False
         progress.done = 0
         progress.errors = []
 
@@ -340,44 +389,90 @@ class KiteService:
             progress.total = len(symbols)
             to_date = date.today()
             from_date = date(to_date.year - years, to_date.month, to_date.day)
-            print(f"[KiteService] Bulk download: {len(symbols)} symbols, {from_date} → {to_date}")
+            print(f"[KiteService] Bulk download: {len(symbols)} symbols, "
+                  f"{from_date} → {to_date}, workers={MAX_WORKERS}")
 
-            BATCH_COMMIT = 50  # Commit every N symbols to avoid huge transactions
+            # ── Resume support: skip symbols already fully downloaded ───────
+            # Open the write session early so we can inspect existing data.
+            # A symbol is considered complete if its oldest candle falls within
+            # 30 days of from_date — meaning the full history window is present.
+            write_db = SessionLocal()
+            from sqlalchemy import func as sql_func
+            threshold = from_date + timedelta(days=30)
+            min_date_rows = (
+                write_db.query(Candle.symbol, sql_func.min(Candle.date).label("min_date"))
+                .group_by(Candle.symbol)
+                .all()
+            )
+            already_done = {r.symbol for r in min_date_rows if r.min_date <= threshold}
+            skipped_count = sum(1 for s in symbols if s in already_done)
+            symbols = [s for s in symbols if s not in already_done]
+            # Offset progress so the % correctly reflects remaining work
+            progress.done = skipped_count
+            if skipped_count:
+                print(f"[KiteService] Resume: skipping {skipped_count} already-complete symbols, "
+                      f"{len(symbols)} remaining.")
+            else:
+                print("[KiteService] Fresh download — no existing data found.")
+            # ─────────────────────────────────────────────────────────────────
 
-            for i, symbol in enumerate(symbols):
-                progress.current_symbol = symbol
-                try:
-                    candles = self.fetch_historical_data(symbol, from_date, to_date, "NSE")
-                    for c in candles:
-                        candle_date = date.fromisoformat(c["date"]) if isinstance(c["date"], str) else c["date"]
-                        existing = db.query(Candle).filter_by(
-                            symbol=symbol, exchange="NSE", date=candle_date
-                        ).first()
-                        if existing:
-                            existing.open = c["open"]
-                            existing.high = c["high"]
-                            existing.low = c["low"]
-                            existing.close = c["close"]
-                            existing.volume = c["volume"]
-                        else:
-                            db.add(Candle(
-                                symbol=symbol, exchange="NSE", date=candle_date,
-                                open=c["open"], high=c["high"], low=c["low"],
-                                close=c["close"], volume=c["volume"],
-                            ))
+            def fetch_one(symbol: str) -> Tuple[str, List[Dict]]:
+                """Fetch candles for a single symbol. Runs inside a worker thread."""
+                candles = self.fetch_historical_data(symbol, from_date, to_date, "NSE")
+                return symbol, candles
 
-                    if (i + 1) % BATCH_COMMIT == 0:
-                        db.commit()
+            done_count = skipped_count  # start counter from already-completed offset
+            try:
+                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                    futures = {executor.submit(fetch_one, sym): sym for sym in symbols}
+                    for future in as_completed(futures):
+                        # Check if user requested cancellation
+                        if progress.stop_requested:
+                            print("[KiteService] Bulk download cancelled by user.")
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            break
 
-                except Exception as e:
-                    err_msg = f"{symbol}: {e}"
-                    print(f"[KiteService] Bulk download error — {err_msg}")
-                    progress.errors.append(err_msg)
+                        sym = futures[future]
+                        progress.current_symbol = sym
+                        try:
+                            symbol, candles = future.result()
+                            # Atomic upsert — avoids IntegrityError from the
+                            # select-then-insert race when autoflush=False causes
+                            # the session identity map to miss pending rows.
+                            from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+                            for c in candles:
+                                candle_date = (
+                                    date.fromisoformat(c["date"])
+                                    if isinstance(c["date"], str) else c["date"]
+                                )
+                                stmt = sqlite_insert(Candle).values(
+                                    symbol=symbol, exchange="NSE", date=candle_date,
+                                    open=c["open"], high=c["high"], low=c["low"],
+                                    close=c["close"], volume=c["volume"],
+                                ).on_conflict_do_update(
+                                    index_elements=["symbol", "exchange", "date"],
+                                    set_=dict(
+                                        open=c["open"], high=c["high"], low=c["low"],
+                                        close=c["close"], volume=c["volume"],
+                                    )
+                                )
+                                write_db.execute(stmt)
+                        except Exception as e:
+                            err_msg = f"{sym}: {e}"
+                            print(f"[KiteService] Bulk download error — {err_msg}")
+                            progress.errors.append(err_msg)
 
-                progress.done = i + 1
+                        done_count += 1
+                        progress.done = done_count
 
-            db.commit()
-            print(f"[KiteService] Bulk download complete. {progress.done} symbols processed.")
+                        if done_count % BATCH_COMMIT == 0:
+                            write_db.commit()
+
+                write_db.commit()
+                status = "cancelled" if progress.stop_requested else "complete"
+                print(f"[KiteService] Bulk download {status}. {done_count} symbols processed.")
+            finally:
+                write_db.close()
 
         except Exception as e:
             print(f"[KiteService] Bulk download worker crashed: {e}")
