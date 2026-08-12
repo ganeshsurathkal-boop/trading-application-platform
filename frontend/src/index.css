@@ -422,9 +422,9 @@ body {
 .stock-row-change.positive { color: var(--green); background: var(--green-bg); }
 .stock-row-change.negative { color: var(--red); background: var(--red-bg); }
 
-.watchlist-footer {
+.watchlist-add-stock-bar {
   padding: 8px 12px;
-  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 

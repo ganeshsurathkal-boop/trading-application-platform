@@ -129,33 +129,8 @@ export default function WatchlistPanel() {
         </div>
       )}
 
-      {/* Column headers */}
-      <div style={{ display: 'flex', padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-        <span style={{ flex: 1 }}>Symbol</span>
-        <span style={{ marginRight: 8 }}>Price</span>
-        <span style={{ minWidth: 50, textAlign: 'right' }}>Chg%</span>
-      </div>
-
-      {/* Stock list */}
-      <div className="watchlist-stocks">
-        {(activeWL?.stocks || []).map((stock) => (
-          <StockRow
-            key={stock.symbol}
-            symbol={stock.symbol}
-            isActive={symbol === stock.symbol}
-            onClick={() => setSymbol(stock.symbol)}
-            onRemove={() => activeWatchlistId && removeStock(activeWatchlistId, stock.symbol)}
-          />
-        ))}
-        {(!activeWL || activeWL.stocks.length === 0) && (
-          <div style={{ padding: 20, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
-            No stocks yet. Add one below.
-          </div>
-        )}
-      </div>
-
-      {/* Footer — Add stock with autocomplete */}
-      <div className="watchlist-footer">
+      {/* Add stock — with autocomplete */}
+      <div className="watchlist-add-stock-bar">
         {showAddStock ? (
           <div style={{ position: 'relative' }}>
             <div style={{ display: 'flex', gap: 4 }}>
@@ -230,6 +205,31 @@ export default function WatchlistPanel() {
           <button id="add-stock-btn" className="btn-add-stock" onClick={() => setShowAddStock(true)}>
             + Add stock
           </button>
+        )}
+      </div>
+
+      {/* Column headers */}
+      <div style={{ display: 'flex', padding: '6px 14px', borderBottom: '1px solid var(--border)', fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+        <span style={{ flex: 1 }}>Symbol</span>
+        <span style={{ marginRight: 8 }}>Price</span>
+        <span style={{ minWidth: 50, textAlign: 'right' }}>Chg%</span>
+      </div>
+
+      {/* Stock list */}
+      <div className="watchlist-stocks">
+        {(activeWL?.stocks || []).map((stock) => (
+          <StockRow
+            key={stock.symbol}
+            symbol={stock.symbol}
+            isActive={symbol === stock.symbol}
+            onClick={() => setSymbol(stock.symbol)}
+            onRemove={() => activeWatchlistId && removeStock(activeWatchlistId, stock.symbol)}
+          />
+        ))}
+        {(!activeWL || activeWL.stocks.length === 0) && (
+          <div style={{ padding: 20, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+            No stocks yet. Add one above.
+          </div>
         )}
       </div>
     </div>
