@@ -119,6 +119,10 @@ class KiteService:
     def __init__(self):
         self._kite = None
         self._connected = False
+        # Set once a request fails with an expired/invalid token, so we stop
+        # pretending we're connected until a fresh access_token is issued.
+        self._token_invalid = False
+        self._invalid_token_value: Optional[str] = None
         # instrument_token cache: "NSE:RELIANCE" -> 738561
         self._token_cache: Dict[str, int] = {}
         # All NSE instruments cache (list of dicts)
@@ -129,22 +133,48 @@ class KiteService:
     # ── Connection ────────────────────────────────────────────────────────────
 
     def _connect(self) -> bool:
-        """Initialise KiteConnect with the stored access token."""
+        """Initialise KiteConnect with the stored access token and verify it actually works."""
         if self._connected and self._kite is not None:
             return True
         if not settings.KITE_API_KEY or not settings.KITE_ACCESS_TOKEN:
             return False
+        # We've already confirmed this exact token is dead (e.g. daily expiry) —
+        # don't keep hitting Kite's API with it until a fresh login updates it.
+        if self._token_invalid and self._invalid_token_value == settings.KITE_ACCESS_TOKEN:
+            return False
         try:
             from kiteconnect import KiteConnect  # type: ignore
-            self._kite = KiteConnect(api_key=settings.KITE_API_KEY)
-            self._kite.set_access_token(settings.KITE_ACCESS_TOKEN)
+            kite = KiteConnect(api_key=settings.KITE_API_KEY)
+            kite.set_access_token(settings.KITE_ACCESS_TOKEN)
+            _rate_limited_sleep()  # this can run concurrently from bulk-download worker threads
+            kite.profile()  # cheap authenticated call — confirms the token is actually live
+            self._kite = kite
             self._connected = True
+            self._token_invalid = False
             print("[KiteService] Connected to Zerodha Kite Connect API")
             return True
         except Exception as e:
-            print(f"[KiteService] Connection failed: {e}")
+            if self._is_token_error(e):
+                print("[KiteService] Access token is expired or invalid — not connected.")
+                self._token_invalid = True
+                self._invalid_token_value = settings.KITE_ACCESS_TOKEN
+            else:
+                print(f"[KiteService] Connection failed: {e}")
+            self._kite = None
             self._connected = False
             return False
+
+    @staticmethod
+    def _is_token_error(e: Exception) -> bool:
+        """True if the exception represents an expired/invalid Kite access token."""
+        try:
+            from kiteconnect.exceptions import TokenException  # type: ignore
+            if isinstance(e, TokenException):
+                return True
+        except Exception:
+            pass
+        msg = str(e).lower()
+        return "access_token" in msg or "api_key" in msg or "token" in msg
 
     def get_login_url(self) -> str:
         """Return the Kite OAuth login URL. User must navigate to this URL to authenticate."""
@@ -170,6 +200,7 @@ class KiteService:
             # Persist in memory
             settings.KITE_ACCESS_TOKEN = access_token
             self._connected = False  # Force reconnect with new token
+            self._token_invalid = False  # New token — give it a fresh chance
             self._connect()
             # Persist to .env on disk
             self._write_token_to_env(access_token)
@@ -209,6 +240,8 @@ class KiteService:
         self._connected = False
         self._token_cache.clear()
         self._instruments_cache = None
+        self._token_invalid = True
+        self._invalid_token_value = settings.KITE_ACCESS_TOKEN
 
     def disconnect(self):
         """Fully disconnect: clear session and wipe the access token from .env."""
@@ -328,8 +361,7 @@ class KiteService:
             ]
             return candles
         except Exception as e:
-            err = str(e)
-            if "TokenException" in err or "Invalid" in err:
+            if self._is_token_error(e):
                 print(f"[KiteService] Token expired, invalidating session.")
                 self.invalidate_session()
             else:
@@ -383,7 +415,13 @@ class KiteService:
         try:
             symbols = self.get_all_nse_symbols()
             if not symbols:
-                print("[KiteService] No symbols found — aborting bulk download")
+                reason = (
+                    "Kite access token is expired or invalid — reconnect and retry."
+                    if self._token_invalid else
+                    "No NSE symbols were returned by Kite — aborting bulk download."
+                )
+                progress.errors.append(reason)
+                print(f"[KiteService] {reason}")
                 return
 
             progress.total = len(symbols)
@@ -432,6 +470,18 @@ class KiteService:
                             executor.shutdown(wait=False, cancel_futures=True)
                             break
 
+                        # Abort once the access token is confirmed dead — otherwise every
+                        # remaining in-flight/queued symbol keeps hitting a doomed API call
+                        # and silently returns empty results instead of real history.
+                        if self._token_invalid:
+                            progress.errors.append(
+                                "Kite access token expired mid-download — aborting. "
+                                "Reconnect and retry to fetch the remaining symbols."
+                            )
+                            print(f"[KiteService] Bulk download aborted: token invalid after {done_count} symbols.")
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            break
+
                         sym = futures[future]
                         progress.current_symbol = sym
                         try:
@@ -469,7 +519,12 @@ class KiteService:
                             write_db.commit()
 
                 write_db.commit()
-                status = "cancelled" if progress.stop_requested else "complete"
+                if progress.stop_requested:
+                    status = "cancelled"
+                elif self._token_invalid:
+                    status = "aborted (token expired)"
+                else:
+                    status = "complete"
                 print(f"[KiteService] Bulk download {status}. {done_count} symbols processed.")
             finally:
                 write_db.close()
