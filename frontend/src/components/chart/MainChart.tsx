@@ -39,6 +39,10 @@ export default function MainChart({ candles, chartType, activeIndicators, onScro
   // Keep onScrollLeft in a ref so the timeScale subscriber always calls the latest version
   const onScrollLeftRef = useRef(onScrollLeft);
   useEffect(() => { onScrollLeftRef.current = onScrollLeft; }, [onScrollLeft]);
+  // Previous sorted candles — used to tell a "prepend older history" update
+  // (scroll-triggered lazy load) apart from a fresh dataset (symbol/interval/
+  // duration change), so we only reset the zoom/pan on a genuine fresh load.
+  const prevSortedRef = useRef<Candle[]>([]);
 
   // ── Initialize chart ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -107,6 +111,22 @@ export default function MainChart({ candles, chartType, activeIndicators, onScro
     const chart = chartRef.current;
     if (!chart || candles.length === 0) return;
 
+    const sorted = [...candles].sort((a, b) => a.date.localeCompare(b.date));
+    const prevSorted = prevSortedRef.current;
+
+    // A "prepend" is a lazy-load of older history: same newest bar, more bars
+    // total, all added at the front. Everything else (symbol/interval/duration
+    // change, or the very first load) is a fresh dataset.
+    const isPrepend =
+      prevSorted.length > 0 &&
+      sorted.length > prevSorted.length &&
+      sorted[sorted.length - 1]?.date === prevSorted[prevSorted.length - 1]?.date;
+    const addedBars = isPrepend ? sorted.length - prevSorted.length : 0;
+    // Must be captured BEFORE removing the current series below — once a chart
+    // has no series attached, getVisibleLogicalRange() can return null, which
+    // would silently fall back to fitContent() and reset the user's scroll.
+    const prevVisibleRange = isPrepend ? chart.timeScale().getVisibleLogicalRange() : null;
+
     if (mainSeriesRef.current) {
       try { chart.removeSeries(mainSeriesRef.current); } catch { /* chart already destroyed */ }
       mainSeriesRef.current = null;
@@ -117,8 +137,6 @@ export default function MainChart({ candles, chartType, activeIndicators, onScro
     }
     // Guard: chart may have been destroyed by StrictMode cleanup
     if (!chartRef.current) return;
-
-    const sorted = [...candles].sort((a, b) => a.date.localeCompare(b.date));
 
     if (chartType === 'candlestick') {
       const series = chart.addSeries(CandlestickSeries, {
@@ -178,7 +196,19 @@ export default function MainChart({ candles, chartType, activeIndicators, onScro
       }))
     );
     volumeSeriesRef.current = volSeries;
-    chart.timeScale().fitContent();
+
+    if (isPrepend && prevVisibleRange) {
+      // Keep the same bars on screen — shift the visible range forward by
+      // however many older bars were just prepended, instead of snapping
+      // the zoom back out to fit everything (which cancelled the user's scroll).
+      chart.timeScale().setVisibleLogicalRange({
+        from: prevVisibleRange.from + addedBars,
+        to: prevVisibleRange.to + addedBars,
+      });
+    } else {
+      chart.timeScale().fitContent();
+    }
+    prevSortedRef.current = sorted;
   }, [candles, chartType]);
 
   // ── Overlay indicators ────────────────────────────────────────────────────
