@@ -28,6 +28,7 @@ export interface ParamDef {
   max: number;
   step?: number;
   label: string;
+  default?: number;
 }
 
 export interface ActiveIndicator {
@@ -77,5 +78,33 @@ export interface ScanResult {
   exchange: string;
   price: number;
   change_pct: number;
-  [key: string]: string | number;
+  matched_criteria?: string[];
+  [key: string]: string | number | string[] | undefined;
+}
+
+export interface ComboCriterion {
+  scanner_name: string;
+  params: Record<string, number>;
+}
+
+export interface ScanCombo {
+  id: number;
+  name: string;
+  universe: string;
+  exchange: string;
+  created_at: string;
+  updated_at: string;
+  criteria: ComboCriterion[];
+}
+
+export interface ComboRunResult {
+  combo_id: number | null;
+  combo_name: string | null;
+  universe: string;
+  exchange: string;
+  run_at: string;
+  criteria: ComboCriterion[];
+  match_count: number;
+  per_criterion_counts: Record<string, number>;
+  results: ScanResult[];
 }
