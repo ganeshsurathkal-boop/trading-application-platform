@@ -37,5 +37,5 @@ def get_db():
 def init_db():
     """Create all tables on startup."""
     # Import models so SQLAlchemy registers them before create_all
-    from app.models import candle, user, watchlist, plugin  # noqa: F401
+    from app.models import candle, user, watchlist, plugin, scan_combo  # noqa: F401
     Base.metadata.create_all(bind=engine)

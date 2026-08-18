@@ -7,7 +7,7 @@ from app.config import settings
 from app.database import init_db, SessionLocal
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services import plugin_manager
-from app.api.routes import auth, candles, watchlist, scanner, profile, kite, bhav, admin
+from app.api.routes import auth, candles, watchlist, scanner, profile, kite, bhav, admin, scan_combos
 
 app = FastAPI(
     title="TICKR Trading API",
@@ -33,6 +33,7 @@ app.include_router(profile.router)
 app.include_router(kite.router)
 app.include_router(bhav.router)
 app.include_router(admin.router)
+app.include_router(scan_combos.router)
 
 
 # ── Startup / Shutdown ────────────────────────────────────────────────────────
